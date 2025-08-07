@@ -1,18 +1,12 @@
 import telebot
-import os
-from dotenv import load_dotenv
 
-# Загружаем переменные окружения из .env файла
-load_dotenv()
-TOKEN = os.getenv("BOT_TOKEN")
-
-if not TOKEN:
-    raise ValueError("Переменная окружения BOT_TOKEN не установлена")
-
-bot = telebot.TeleBot(TOKEN)
+# Токен уже вставлен напрямую
+TOKEN = "7611168200:AAFkdTWAz1xMawJOKF0Mu21ViFA5Oz8wblk"
 
 # Авторизованные пользователи по user.id
 AUTHORIZED_IDS = [564415186, 1038649944]
+
+bot = telebot.TeleBot(TOKEN)
 
 def is_authorized(message):
     return message.from_user.id in AUTHORIZED_IDS
@@ -65,3 +59,4 @@ def handle_message(message):
         bot.reply_to(message, "Неизвестная команда. Напишите 'помощь' для списка команд.")
 
 bot.polling()
+
