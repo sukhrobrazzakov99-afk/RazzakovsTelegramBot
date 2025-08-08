@@ -2,6 +2,14 @@ from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 from datetime import datetime
 import os
+import logging
+import sys
+
+logging.basicConfig(
+    stream=sys.stdout,
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 
 TOKEN = "7611168200:AAFkdTWAz1xMawJOKF0Mu21ViFA5Oz8wblk"
 AUTHORIZED_USERS = [564415186, 1038649944]
@@ -106,10 +114,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not data["history"]:
             await update.message.reply_text("История пуста.")
         else:
-            msg = "
-".join([format_history_entry(e) for e in data["history"][-10:]])
-            await update.message.reply_text(f"Последние записи:
-{msg}")
+            msg = "\n".join([format_history_entry(e) for e in data["history"][-10:]])
+            await update.message.reply_text(f"Последние записи:\n{msg}")
 
     elif text == "🧨 Сброс":
         data["balance"] = 0
@@ -136,4 +142,8 @@ app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-app.run_polling()
+try:
+    app.run_polling()
+except Exception as e:
+    logging.error(f"⚠️ Ошибка запуска polling: {e}")
+    logging.info("Проверь, не запущен ли другой экземпляр бота.")
