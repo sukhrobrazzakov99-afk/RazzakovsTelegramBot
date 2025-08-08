@@ -1,6 +1,5 @@
-
 from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 import os
 
 TOKEN = "7611168200:AAFkdTWAz1xMawJOKF0Mu21ViFA5Oz8wblk"
@@ -70,8 +69,13 @@ app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 if __name__ == "__main__":
+    webhook_host = os.environ.get("RAILWAY_STATIC_URL")
+    webhook_path = f"/webhook/{TOKEN}"
+    webhook_url = f"{webhook_host}{webhook_path}"
+
     app.run_webhook(
         listen="0.0.0.0",
         port=int(os.environ.get("PORT", 8000)),
-        webhook_url=f"{os.environ.get('RAILWAY_STATIC_URL')}/"
+        webhook_path=webhook_path,
+        webhook_url=webhook_url
     )
