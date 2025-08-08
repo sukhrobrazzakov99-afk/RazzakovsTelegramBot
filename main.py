@@ -68,10 +68,4 @@ app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-webhook_url = os.environ.get("RAILWAY_STATIC_URL") + f"/webhook/{TOKEN}"
-
-app.run_webhook(
-    listen="0.0.0.0",
-    port=int(os.environ.get("PORT", 8000)),
-    webhook_url=webhook_url
-)
+app.run_polling()
