@@ -1,7 +1,6 @@
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 import os
-from aiohttp import web
 
 TOKEN = "7611168200:AAFkdTWAz1xMawJOKF0Mu21ViFA5Oz8wblk"
 AUTHORIZED_USERS = [564415186, 1038649944]
@@ -69,13 +68,10 @@ app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-async def on_startup(app_: web.Application):
-    webhook_url = os.environ.get("RAILWAY_STATIC_URL") + f"/webhook/{TOKEN}"
-    await app.bot.set_webhook(url=webhook_url)
+webhook_url = os.environ.get("RAILWAY_STATIC_URL") + f"/webhook/{TOKEN}"
 
 app.run_webhook(
     listen="0.0.0.0",
     port=int(os.environ.get("PORT", 8000)),
-    path=f"/webhook/{TOKEN}",
-    on_startup=on_startup
+    webhook_url=webhook_url
 )
