@@ -70,12 +70,10 @@ app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 if __name__ == "__main__":
     webhook_host = os.environ.get("RAILWAY_STATIC_URL")
-    webhook_path = f"/webhook/{TOKEN}"
-    webhook_url = f"{webhook_host}{webhook_path}"
+    webhook_url = f"{webhook_host}/webhook/{TOKEN}"
 
     app.run_webhook(
         listen="0.0.0.0",
         port=int(os.environ.get("PORT", 8000)),
-        webhook_path=webhook_path,
-        webhook_url=webhook_url
+        url=webhook_url
     )
