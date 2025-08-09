@@ -1,149 +1,151 @@
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+import os, logging, sys
 from datetime import datetime
-import os
-import logging
-import sys
+from dotenv import load_dotenv
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import Application, ContextTypes, CommandHandler, MessageHandler, filters
+from db import init_db, add_op, get_balance, get_history
+from ai_helper import parse_free_text, ai_answer
 
-logging.basicConfig(
-    stream=sys.stdout,
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+load_dotenv()
 
-TOKEN = "7611168200:AAFkdTWAz1xMawJOKF0Mu21ViFA5Oz8wblk"
-AUTHORIZED_USERS = [564415186, 1038649944]
+logging.basicConfig(stream=sys.stdout, level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
-keyboard = [
-    ["➕ Доход", "➖ Расход"],
-    ["📊 Баланс", "💰 История"],
-    ["🔄 Отмена", "🧨 Сброс"]
-]
+TOKEN = os.getenv('TELEGRAM_BOT_TOKEN','').strip()
+AUTHORIZED = [int(x) for x in os.getenv('AUTHORIZED_USER_IDS','').replace(' ','').split(',') if x]
+PORT = int(os.getenv('PORT','8000'))
+PUBLIC_URL = os.getenv('RAILWAY_STATIC_URL','').rstrip('/')
 
-category_keyboard = [
-    ["💼 Зарплата", "🎁 Бонус"],
-    ["🍔 Еда", "🚕 Транспорт"],
-    ["💊 Здоровье", "🏠 Аренда"],
-    ["🔙 Назад"]
-]
+USER_NAMES = {AUTHORIZED[i]: n for i,n in enumerate(['Сухроб','Брат'][:len(AUTHORIZED)])}
 
-user_data = {}
+MAIN_KB = ReplyKeyboardMarkup([
+    [KeyboardButton('➖ Добавить расход'), KeyboardButton('💰 Добавить доход')],
+    [KeyboardButton('💼 Баланс'), KeyboardButton('📚 История')],
+    [KeyboardButton('🤖 AI помощник'), KeyboardButton('📤 Экспорт')],
+], resize_keyboard=True)
 
-def is_authorized(user_id):
-    return user_id in AUTHORIZED_USERS
+EXPENSE_CATS = ['🍔 Еда','🚕 Транспорт','💊 Здоровье','🏠 Аренда','🛠 Закупки','🎉 Развлечения','➖ Другое']
+INCOME_CATS  = ['💼 Зарплата','🎁 Бонус','🏪 Продажа товаров','💳 Перевод','➕ Другое (доход)']
+def cats_kb(cats): 
+    rows=[cats[i:i+2] for i in range(0,len(cats),2)]
+    rows.append(['🔙 Назад'])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
-def format_history_entry(entry):
-    return f"{entry['emoji']} {entry['type']}: {entry['category']} {entry['sign']}{entry['amount']} сум — {entry['date']}"
+CURRENCIES_KB = ReplyKeyboardMarkup([[KeyboardButton('💵 USD'), KeyboardButton('🇺🇿 UZS')], ['🔙 Назад']], resize_keyboard=True)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_authorized(update.effective_user.id):
-        await update.message.reply_text("⛔️ У вас нет доступа к этому боту.")
+    if update.effective_user and update.effective_user.id not in AUTHORIZED:
         return
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("👋 Привет! Я финансовый бот Razzakovs. Выберите действие:", reply_markup=reply_markup)
+    await update.message.reply_text('Добро пожаловать! Выберите действие:', reply_markup=MAIN_KB)
+
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user and update.effective_user.id not in AUTHORIZED:
+        return
+    await update.message.reply_text('Кнопки снизу: добавляйте доходы/расходы, смотрите баланс и историю.')
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    text = update.message.text
+    user = update.effective_user
+    if not user or user.id not in AUTHORIZED:
+        return
+    chat_id = update.effective_chat.id
+    text = (update.message.text or '').strip()
 
-    if not is_authorized(user_id):
-        await update.message.reply_text("⛔️ У вас нет доступа.")
+    if text in ('🔙 Назад','/start','Меню'):
+        context.user_data.clear()
+        await update.message.reply_text('Меню:', reply_markup=MAIN_KB)
         return
 
-    if user_id not in user_data:
-        user_data[user_id] = {"balance": 0, "history": [], "temp": {}}
+    if text == '➖ Добавить расход':
+        context.user_data['mode'] = 'Расход'
+        await update.message.reply_text('Выберите категорию расхода:', reply_markup=cats_kb(EXPENSE_CATS))
+        return
+    if text == '💰 Добавить доход':
+        context.user_data['mode'] = 'Доход'
+        await update.message.reply_text('Выберите категорию дохода:', reply_markup=cats_kb(INCOME_CATS))
+        return
 
-    data = user_data[user_id]
+    if context.user_data.get('mode') in ('Расход','Доход') and text in EXPENSE_CATS + INCOME_CATS:
+        context.user_data['category'] = text.replace(' (доход)','')
+        await update.message.reply_text('В какой валюте?', reply_markup=CURRENCIES_KB)
+        return
 
-    if text == "➕ Доход":
-        context.user_data["action"] = "income"
-        reply_markup = ReplyKeyboardMarkup(category_keyboard, resize_keyboard=True)
-        await update.message.reply_text("Выберите категорию дохода:", reply_markup=reply_markup)
+    if text in ('💵 USD','🇺🇿 UZS'):
+        context.user_data['currency'] = 'USD' if 'USD' in text else 'UZS'
+        await update.message.reply_text('Введите сумму (целое число):', reply_markup=ReplyKeyboardMarkup([['🔙 Назад']],resize_keyboard=True))
+        return
 
-    elif text == "➖ Расход":
-        context.user_data["action"] = "expense"
-        reply_markup = ReplyKeyboardMarkup(category_keyboard, resize_keyboard=True)
-        await update.message.reply_text("Выберите категорию расхода:", reply_markup=reply_markup)
+    if context.user_data.get('currency') and text.isdigit():
+        amount = int(text)
+        op_type = context.user_data.get('mode')
+        category = context.user_data.get('category')
+        currency = context.user_data.get('currency')
+        ts = datetime.now().strftime('%Y-%m-%d %H:%M')
+        add_op(chat_id, user.id, USER_NAMES.get(user.id, str(user.id)), op_type, category, currency, amount, ts)
+        context.user_data.clear()
+        sign = '+' if op_type=='Доход' else '-'
+        emoji = '🟢' if op_type=='Доход' else '🔴'
+        await update.message.reply_text(f"{emoji} {op_type}: {category} {sign}{amount} {currency} — {ts} ({USER_NAMES.get(user.id,'')})",
+                                        reply_markup=MAIN_KB)
+        return
 
-    elif text in sum(category_keyboard, []):
-        if text == "🔙 Назад":
-            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-            await update.message.reply_text("Главное меню", reply_markup=reply_markup)
-            return
-        context.user_data["category"] = text
-        await update.message.reply_text("Введите сумму:")
+    if text == '💼 Баланс':
+        b = get_balance(chat_id)
+        await update.message.reply_text(f"💼 Общая касса:\nUSD: {b.get('USD',0)}\nUZS: {b.get('UZS',0)}", reply_markup=MAIN_KB)
+        return
 
-    elif text.replace(" ", "").isdigit():
-        action = context.user_data.get("action")
-        category = context.user_data.get("category")
-        amount = int(text.replace(" ", ""))
-        now = datetime.now().strftime("%d.%m.%Y %H:%M")
+    if text == '📚 История':
+        hist = get_history(chat_id, 10)
+        if not hist:
+            await update.message.reply_text('История пуста.', reply_markup=MAIN_KB); return
+        lines = []
+        for t,cat,cur,amt,ts,u in hist:
+            sign = '+' if t=='Доход' else '-'
+            emoji = '🟢' if t=='Доход' else '🔴'
+            lines.append(f"{emoji} {t}: {cat} {sign}{amt} {cur} — {ts} ({u.lower()})")
+        await update.message.reply_text('\n'.join(lines), reply_markup=MAIN_KB)
+        return
 
-        if not action or not category:
-            await update.message.reply_text("Сначала выберите ➕ Доход или ➖ Расход и категорию.")
-            return
+    if text == '📤 Экспорт':
+        await update.message.reply_text('Экспорт в Excel добавлю после деплоя (файл .xlsx за период).', reply_markup=MAIN_KB)
+        return
 
-        sign = "+" if action == "income" else "-"
-        emoji = "🟢" if action == "income" else "🔴"
-        entry = {
-            "type": "Доход" if action == "income" else "Расход",
-            "category": category,
-            "amount": amount,
-            "sign": sign,
-            "emoji": emoji,
-            "date": now
-        }
-
-        if action == "income":
-            data["balance"] += amount
+    if text == '🤖 AI помощник':
+        await update.message.reply_text("Напишите: 'еда 150000' или спросите: 'сколько потратили на еду в июле?' — попробую распознать.")
+        context.user_data['ai_mode']=True
+        return
+    if context.user_data.get('ai_mode'):
+        p = parse_free_text(text)
+        if p['amount'] is not None:
+            ts = datetime.now().strftime('%Y-%m-%d %H:%M')
+            add_op(chat_id, user.id, USER_NAMES.get(user.id, str(user.id)), p['type'], p['category'], p['currency'], int(p['amount']), ts)
+            sign = '+' if p['type']=='Доход' else '-'
+            emoji = '🟢' if p['type']=='Доход' else '🔴'
+            await update.message.reply_text(f"{emoji} {p['type']}: {p['category']} {sign}{p['amount']} {p['currency']} — {ts} ({USER_NAMES.get(user.id,'')})")
         else:
-            data["balance"] -= amount
+            ans = ai_answer(text) or 'Не понял сумму. Пример: "Еда 150000" или "продажа 100 usd".'
+            await update.message.reply_text(ans)
+        context.user_data.pop('ai_mode', None)
+        return
 
-        data["history"].append(entry)
-        data["temp"]["last"] = entry
+    await update.message.reply_text('Выберите действие:', reply_markup=MAIN_KB)
 
-        await update.message.reply_text(f"{emoji} {entry['type']} {category} {sign}{amount} сохранён!")
+async def on_startup(app: Application):
+    init_db()
+    if PUBLIC_URL and TOKEN:
+        url = f"{PUBLIC_URL}/webhook/{TOKEN}"
+        await app.bot.set_webhook(url)
+        logging.info(f"Webhook set to: {url}")
 
-        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-        await update.message.reply_text("Что дальше?", reply_markup=reply_markup)
+def main():
+    if not TOKEN:
+        logging.error('Нет TELEGRAM_BOT_TOKEN'); return
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(CommandHandler('start', start))
+    app.add_handler(CommandHandler('help', help_cmd))
+    app.add_handler(CommandHandler('export', help_cmd))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.post_init = on_startup
+    app.run_webhook(listen='0.0.0.0', port=int(os.getenv('PORT','8000')), secret_token=None)
 
-    elif text == "📊 Баланс":
-        await update.message.reply_text(f"💼 Ваш текущий баланс: {data['balance']} сум")
-
-    elif text == "💰 История":
-        if not data["history"]:
-            await update.message.reply_text("История пуста.")
-        else:
-            msg = "\n".join([format_history_entry(e) for e in data["history"][-10:]])
-            await update.message.reply_text(f"Последние записи:\n{msg}")
-
-    elif text == "🧨 Сброс":
-        data["balance"] = 0
-        data["history"] = []
-        await update.message.reply_text("Все данные сброшены!")
-
-    elif text == "🔄 Отмена":
-        last = data.get("temp", {}).get("last")
-        if last:
-            if last["type"] == "Доход":
-                data["balance"] -= last["amount"]
-            else:
-                data["balance"] += last["amount"]
-            data["history"].remove(last)
-            data["temp"]["last"] = None
-            await update.message.reply_text("⛔️ Последняя операция отменена.")
-        else:
-            await update.message.reply_text("Нет операций для отмены.")
-
-    else:
-        await update.message.reply_text("Пожалуйста, выберите действие на клавиатуре.")
-
-app = ApplicationBuilder().token(TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-try:
-    app.run_polling()
-except Exception as e:
-    logging.error(f"⚠️ Ошибка запуска polling: {e}")
-    logging.info("Проверь, не запущен ли другой экземпляр бота.")
+if __name__ == '__main__':
+    main()
