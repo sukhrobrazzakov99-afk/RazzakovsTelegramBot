@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os, re
 from typing import Dict, Optional
 from openai import OpenAI
@@ -16,35 +17,45 @@ EXPENSE_HINTS = {
 
 def parse_free_text(text: str) -> Dict:
     s = text.lower()
+
+    # Валюта
     currency = 'UZS'
     if 'usd' in s or '$' in s:
         currency = 'USD'
-    m = re.search(r'(\d[\d\s,.'’]*)', s)
+
+    # Сумма (ТОЛЬКО ASCII: пробел, запятая, точка, апостроф)
+    m = re.search(r"(\d[\d\s,\.']*)", s)
     amount = None
     if m:
-        raw = m.group(1).replace(' ', '').replace(',', '').replace('.', '').replace('’','').replace("'",'')
+        raw = m.group(1)
+        raw = raw.replace(' ', '').replace(',', '').replace('.', '').replace("'", '')
         try:
             amount = int(raw)
         except Exception:
             amount = None
+
+    # Тип
     op_type = 'Расход'
     if any(k in s for k in INCOME_HINTS):
         op_type = 'Доход'
-    category = 'Другое' if op_type=='Расход' else 'Другое (доход)'
-    if op_type=='Расход':
+
+    # Категория
+    category = 'Другое' if op_type == 'Расход' else 'Другое (доход)'
+    if op_type == 'Расход':
         for cat, keys in EXPENSE_HINTS.items():
             if any(k in s for k in keys):
                 category = cat
                 break
     else:
-        if any(k in s for k in ['зарплата','оклад']):
+        if any(k in s for k in ['зарплата', 'оклад']):
             category = 'Зарплата'
-        elif any(k in s for k in ['бонус','прем']):
+        elif any(k in s for k in ['бонус', 'прем']):
             category = 'Бонус'
         elif 'прод' in s:
             category = 'Продажа товаров'
         elif 'перевод' in s:
             category = 'Перевод'
+
     return {'type': op_type, 'category': category, 'amount': amount, 'currency': currency}
 
 def ai_answer(question: str) -> Optional[str]:
@@ -55,8 +66,8 @@ def ai_answer(question: str) -> Optional[str]:
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role":"system","content":"Ты помогатор по домашним финансам. Отвечай кратко и по делу."},
-                {"role":"user","content":question.strip()[:4000]}
+                {"role": "system", "content": "Ты помощник по домашним финансам. Отвечай кратко и по делу."},
+                {"role": "user", "content": question.strip()[:4000]}
             ],
             temperature=0.2,
             max_tokens=200
@@ -64,3 +75,4 @@ def ai_answer(question: str) -> Optional[str]:
         return resp.choices[0].message.content.strip()
     except Exception as e:
         return f"AI ошибка: {e}"
+
