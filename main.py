@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
-import os, logging, datetime, pandas as pd, asyncio
+import os, logging, datetime, pandas as pd
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler,
+    CallbackQueryHandler, ContextTypes, filters
+)
 from db import init_db, add_op, get_balance, get_history
 from ai_helper import parse_free_text, ai_answer
 
@@ -12,10 +15,10 @@ PUBLIC_URL = "https://razzakovstelegrambot.up.railway.app"
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-INCOME_CATEGORIES = ["Зарплата", "Бонус", "Продажа товаров", "Перевод", "Другое (доход)"]
-EXPENSE_CATEGORIES = ["Еда", "Транспорт", "Здоровье", "Аренда", "Закупки", "Развлечения", "Другое"]
+INCOME_CATEGORIES = ["Зарплата","Бонус","Продажа товаров","Перевод","Другое (доход)"]
+EXPENSE_CATEGORIES = ["Еда","Транспорт","Здоровье","Аренда","Закупки","Развлечения","Другое"]
 
-def check_access(uid: int) -> bool: return uid in AUTHORIZED_IDS
+def check_access(uid:int)->bool: return uid in AUTHORIZED_IDS
 
 def main_menu():
     kb = [
@@ -36,27 +39,30 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     uid = q.from_user.id
-    if not check_access(uid): return await q.edit_message_text("⛔ У вас нет доступа.")
+    if not check_access(uid):
+        return await q.edit_message_text("⛔ У вас нет доступа.")
     d = q.data
-    if d == "add_income":
+    if d=="add_income":
         context.user_data["type"]="Доход"; await q.edit_message_text("💵 Введите сумму и описание (или просто сумму):")
-    elif d == "add_expense":
+    elif d=="add_expense":
         context.user_data["type"]="Расход"; await q.edit_message_text("💸 Введите сумму и описание:")
-    elif d == "show_balance":
+    elif d=="show_balance":
         b = get_balance(q.message.chat.id)
         await q.edit_message_text(f"💰 Баланс:\nUSD: {b['USD']}\nUZS: {b['UZS']}", reply_markup=main_menu())
-    elif d == "show_history":
+    elif d=="show_history":
         hist = get_history(q.message.chat.id, 10)
         if not hist: return await q.edit_message_text("История пуста.", reply_markup=main_menu())
-        text = "📜 Последние операции:\n" + "\n".join([f"{ts} — {uname}: {t} {amt} {cur} ({cat})" for t,cat,cur,amt,ts,uname in hist])
+        text = "📜 Последние операции:\n" + "\n".join(
+            f"{ts} — {uname}: {t} {amt} {cur} ({cat})" for t,cat,cur,amt,ts,uname in hist
+        )
         await q.edit_message_text(text, reply_markup=main_menu())
-    elif d == "export_excel":
+    elif d=="export_excel":
         hist = get_history(q.message.chat.id, 1000)
         df = pd.DataFrame(hist, columns=["Тип","Категория","Валюта","Сумма","Дата","Пользователь"])
         path = "export.xlsx"; df.to_excel(path, index=False)
         await q.message.reply_document(open(path,"rb"))
-    elif d == "ai_help":
-        await q.edit_message_text("🤖 Введите вопрос для AI (или пришлите запись вида: 'еда 150000 usd').")
+    elif d=="ai_help":
+        await q.edit_message_text("🤖 Введите вопрос для AI (или запись вида: 'еда 150000 usd').")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -94,15 +100,15 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # ВАЖНО: ставим вебхук на КОРЕНЬ '/'
-    root_url = PUBLIC_URL.rstrip('/') + '/'
-    asyncio.get_event_loop().run_until_complete(app.bot.set_webhook(root_url))
-
-    # И слушаем тоже КОРЕНЬ (без url_path, по умолчанию '/')
+    path = f"/webhook/{TOKEN}"
+    full_url = f"{PUBLIC_URL}{path}"
     app.run_webhook(
         listen="0.0.0.0",
-        port=int(os.getenv("PORT","8000"))
+        port=int(os.getenv("PORT","8000")),
+        url_path=path,
+        webhook_url=full_url
     )
 
 if __name__ == "__main__":
     main()
+
